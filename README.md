@@ -33,7 +33,7 @@ tool that sets the hull or shield of the ship under your mouse.
 | File | What it is |
 |---|---|
 | `SinsTrainer.cs` | The whole trainer source code (one C# file, Windows Forms). |
-| `SinsTrainer.exe` | The built trainer. Run this one. |
+| `SinsTrainer.exe` | The built trainer. Not stored in the repo: download `SinsTrainer.zip` from the [Releases](../../releases) page, or build it yourself with `build.bat`. |
 | `build.bat` | Builds `SinsTrainer.exe` from `SinsTrainer.cs`. |
 | `README.md` | This guide. |
 | `REVERSE_ENGINEERING.md` | Technical notes: how the cheats work inside the game and how to update them. |
@@ -50,6 +50,11 @@ tool that sets the hull or shield of the ship under your mouse.
   any other version. The Resources and Advanced Scan tabs work with any version.
 
 ---
+
+## Download
+
+Grab the latest `SinsTrainer.zip` from the [Releases](../../releases) page and extract it. Each release
+is tagged with a version (`v1.0.0`, `v1.1.0`, ...), so you can also download older builds.
 
 ## Building
 

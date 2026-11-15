@@ -12,3 +12,4 @@ node_modules/
 
 # Built binary (distributed as SinsTrainer.zip)
 *.exe
+*.zip
