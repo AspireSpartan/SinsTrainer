@@ -1,0 +1,14 @@
+# Local backups
+*.bak-before-cheats
+*.bak
+
+# Decompiled game output and analysis projects (large, and derived from the game's own code)
+sins_decomp/
+*.gpr
+*.rep/
+
+# Node
+node_modules/
+
+# Built binary (distributed as SinsTrainer.zip)
+*.exe
