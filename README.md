@@ -19,8 +19,7 @@ tool that sets the hull or shield of the ship under your mouse.
 - [Cheats tab](#cheats-tab)
 - [Ship hull / shield](#ship-hull--shield)
 - [Hotkeys](#hotkeys)
-- [Resources / Ships tab](#resources--ships-tab)
-- [Advanced Scan tab](#advanced-scan-tab)
+- [Resources tab](#resources-tab)
 - [Does it affect the AI?](#does-it-affect-the-ai)
 - [Troubleshooting](#troubleshooting)
 - [Safety notes](#safety-notes)
@@ -47,7 +46,7 @@ tool that sets the hull or shield of the ship under your mouse.
 - Windows 10 or 11 (64-bit).
 - .NET Framework 4.x. It is already part of Windows, so nothing extra needs installing.
 - *Sins of a Solar Empire: Rebellion* **v1.98**. The Cheats tab checks the game version and refuses
-  any other version. The Resources and Advanced Scan tabs work with any version.
+  any other version. The Resources tab works with any version.
 
 ---
 
@@ -189,17 +188,14 @@ The buttons in the trainer still do.
 
 ---
 
-## Resources / Ships tab
+## Resources tab
 
 This is the original scan-based part of the trainer, the same idea as Cheat Engine's value scan.
-Use it for credits, metal, crystal, and a selected ship's hull and shield.
+Use it for credits, metal and crystal.
 
 | Row | Default "+N" button |
 |---|---|
 | Credits, Metal, Crystal | +10k |
-| Fleet Supply (max) / (used) | +100 / −100 |
-| Capital Ships (max) / (used) | +1 / −1 |
-| Selected Ship Hull / Shield | +1000 |
 
 How to use a row:
 
@@ -211,27 +207,10 @@ How to use a row:
 Tips:
 - If a scan finds nothing, change that row's **Type** (Float / Int32 / Double) and do a First Scan again.
 - Small numbers (0 or 1) are too common to scan. Wait until the value is 2 or more.
-- Hull and shield work on one ship at a time. Click the **x** button and scan again for another ship.
 - Addresses change with every new or loaded game, so scan again each match.
 
-> For fleet supply and capital ships, the **Cheats tab is easier** (Unlimited Ships or the number boxes).
-> For hull and shield, the [Ship hull / shield](#ship-hull--shield) box is easier: no scanning needed.
-
 ---
 
-## Advanced Scan tab
-
-This is a general "unknown value" scanner, for finishing one specific build, research or upgrade
-by hand. With the Cheats tab you normally don't need it. The step-by-step instructions are shown
-on the tab itself. In short:
-
-1. Start **one** item in the game and pause.
-2. **First Scan (range)** 0 to 1 with "Skip whole numbers" ticked.
-3. Unpause for 2–3 seconds, pause, click **Increased**, then **Unchanged**. Repeat 3–5 times.
-4. Use **In range** to match the progress bar until 500 or fewer values remain.
-5. Pick the value that moves with your progress bar, set it to **1**, and click **Set selected**.
-
----
 
 ## Does it affect the AI?
 

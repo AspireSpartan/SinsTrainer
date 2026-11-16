@@ -192,56 +192,6 @@ class Mem
         }
     }
 
-    // Unknown-value first scan: every value with min <= v <= max. Returns false if too many.
-    public bool ScanRange(double min, double max, ValType t, bool skipWhole, List<long> addrs, List<double> vals)
-    {
-        int sz = Size(t);
-        bool tooMany = false;
-        ForEachChunk((baseA, buf, n) =>
-        {
-            for (int i = 0; i + sz <= n; i += 4)
-            {
-                double v = Decode(buf, i, t);
-                if (double.IsNaN(v) || v < min || v > max) continue;
-                if (skipWhole && v == Math.Floor(v)) continue;
-                addrs.Add(baseA + i); vals.Add(v);
-                if (addrs.Count > 10000000) { tooMany = true; return false; }
-            }
-            return true;
-        });
-        return !tooMany;
-    }
-
-    // Reads many (ascending) addresses quickly using 64 KB block reads.
-    public double[] ReadMany(List<long> addrs, ValType t, bool[] ok)
-    {
-        int sz = Size(t);
-        var vals = new double[addrs.Count];
-        const int BLK = 65536;
-        byte[] buf = new byte[BLK];
-        long curBase = -1; int curLen = 0;
-        for (int i = 0; i < addrs.Count; i++)
-        {
-            long a = addrs[i];
-            if (curBase < 0 || a < curBase || a + sz > curBase + curLen)
-            {
-                curBase = a; curLen = 0;
-                IntPtr r;
-                if (Native.ReadProcessMemory(Handle, new IntPtr(a), buf, new IntPtr(BLK), out r)) curLen = (int)r.ToInt64();
-                else
-                {
-                    int toPageEnd = (int)(0x1000 - (a & 0xFFF));
-                    if (toPageEnd < sz) toPageEnd = sz;
-                    if (Native.ReadProcessMemory(Handle, new IntPtr(a), buf, new IntPtr(toPageEnd), out r)) curLen = (int)r.ToInt64();
-                }
-            }
-            if (a + sz > curBase + curLen) { ok[i] = false; curBase = -1; continue; }
-            ok[i] = true;
-            vals[i] = Decode(buf, (int)(a - curBase), t);
-        }
-        return vals;
-    }
-
     // Full scan of all writable committed memory. keep==null => accept all matches.
     // Returns null if the value is too common (more than MAX_RESULTS hits).
     public List<long> Scan(double target, ValType t, bool exact, HashSet<long> keep)
@@ -644,11 +594,9 @@ class TrainerForm : Form
 
         var tabs = new TabControl { Location = new Point(4, 44), Size = new Size(W - 8, H - 48) };
         var cheatPage = new TabPage("Cheats");
-        resPage = new TabPage("Resources / Ships");
-        var advPage = new TabPage("Advanced Scan (finish build / research / upgrade)");
+        resPage = new TabPage("Resources");
         tabs.TabPages.Add(cheatPage);
         tabs.TabPages.Add(resPage);
-        tabs.TabPages.Add(advPage);
         Controls.Add(tabs);
         int pageH = tabs.Height - 30;
 
@@ -671,14 +619,6 @@ class TrainerForm : Form
         AddRow("Credits", y, false, 10000, "999999"); y += 36;
         AddRow("Metal", y, false, 10000, "999999"); y += 36;
         AddRow("Crystal", y, false, 10000, "999999"); y += 36;
-        AddRow("Fleet Supply (max)", y, true, 100, "2000"); y += 36;
-        AddRow("Fleet Supply (used)", y, true, -100, "0"); y += 36;
-        AddRow("Capital Ships (max)", y, true, 1, "16"); y += 36;
-        AddRow("Capital Ships (used)", y, true, -1, "0"); y += 36;
-        AddRow("Selected Ship Hull", y, false, 1000, "99999"); y += 36;
-        AddRow("Selected Ship Shield", y, false, 1000, "99999"); y += 36;
-
-        BuildAdvancedTab(advPage, pageH);
 
         resPage.Controls.Add(new Label
         {
@@ -690,13 +630,6 @@ class TrainerForm : Form
 "3. Go back to the game and let it change (unpause, buy something). Type the new HUD number and click Next Scan.\r\n" +
 "4. Repeat until Status shows only a few addresses (ideally 1-5). Then type a New value and click Set / +N, and tick Freeze to lock it.\r\n" +
 "5. Addresses change every new or loaded game, so scan again each match.\r\n" +
-"FLEET SUPPLY / CAPITAL SHIPS (HUD shows used / max): small numbers, so the First Scan finds many addresses. Change them in game to narrow down:\r\n" +
-"   - (used) rows: build or lose a ship, then Next Scan. Set or Freeze at 0 so you can keep building.\r\n" +
-"   - (max) rows: finish a fleet-logistics / capital-ship research, then Next Scan. Then Set a higher max.\r\n" +
-"   You can't First Scan a value of 0 or 1 - wait until it is 2 or more. If one row doesn't stick in game, try the other one.\r\n" +
-"SELECTED SHIP HULL / SHIELD: click one of YOUR ships, read its hull (or shield) number in the info panel and First Scan it.\r\n" +
-"   Let it take damage (or shields recharge), then Next Scan with the new number until few addresses remain. Freeze = invincible ship.\r\n" +
-"   This works on one ship at a time - press x and scan again for another ship.\r\n" +
 "Tip: pausing the game while scanning is fine as long as the HUD number matches what you type. Run as Administrator if Attach fails."
         });
 
@@ -944,271 +877,6 @@ class TrainerForm : Form
         base.WndProc(ref m);
     }
 
-    // ===================== Advanced (unknown value) scan =====================
-    enum Filter { Increased, Decreased, Changed, Unchanged, InRange, Exact }
-
-    ComboBox advType;
-    TextBox advMin, advMax, advExact, advSet;
-    CheckBox advSkipWhole;
-    Label advStatus;
-    ListView advList;
-    List<Button> advFilterBtns = new List<Button>();
-    Button advFirst;
-    List<long> advAddrs = new List<long>();
-    List<double> advVals = new List<double>();
-    ValType advScanType = ValType.Float;
-    bool advHasScan;
-    const int ADV_LIST_MAX = 500;
-
-    class Frozen { public ValType T; public double V; }
-    Dictionary<long, Frozen> frozen = new Dictionary<long, Frozen>();
-
-    void BuildAdvancedTab(TabPage p, int pageH)
-    {
-        int y = 10;
-        p.Controls.Add(new Label { Text = "Type:", Location = new Point(8, y + 4), AutoSize = true });
-        advType = new ComboBox { Location = new Point(50, y), Width = 75, DropDownStyle = ComboBoxStyle.DropDownList };
-        advType.Items.AddRange(new object[] { "Float", "Int32", "Double" });
-        advType.SelectedIndex = 0;
-        p.Controls.Add(new Label { Text = "Range from", Location = new Point(140, y + 4), AutoSize = true });
-        advMin = new TextBox { Location = new Point(215, y), Width = 70, Text = "0" };
-        p.Controls.Add(new Label { Text = "to", Location = new Point(290, y + 4), AutoSize = true });
-        advMax = new TextBox { Location = new Point(312, y), Width = 70, Text = "1" };
-        advSkipWhole = new CheckBox { Text = "Skip whole numbers (recommended for 0-1 progress)", Location = new Point(395, y + 2), AutoSize = true, Checked = true };
-        p.Controls.AddRange(new Control[] { advType, advMin, advMax, advSkipWhole });
-
-        y = 44;
-        advFirst = new Button { Text = "First Scan (range)", Location = new Point(8, y), Width = 125 };
-        advFirst.Click += delegate { AdvFirstScan(); };
-        p.Controls.Add(advFirst);
-        int x = 140;
-        foreach (var f in new[] { Filter.Increased, Filter.Decreased, Filter.Changed, Filter.Unchanged, Filter.InRange })
-        {
-            var ff = f;
-            var b = new Button { Text = f == Filter.InRange ? "In range" : f.ToString(), Location = new Point(x, y), Width = 85, Enabled = false };
-            b.Click += delegate { AdvFilter(ff); };
-            advFilterBtns.Add(b); p.Controls.Add(b); x += 90;
-        }
-        var bEx = new Button { Text = "Exact =", Location = new Point(x, y), Width = 65, Enabled = false };
-        bEx.Click += delegate { AdvFilter(Filter.Exact); };
-        advFilterBtns.Add(bEx); p.Controls.Add(bEx);
-        advExact = new TextBox { Location = new Point(x + 70, y + 1), Width = 70, Text = "0.5" };
-        var bReset = new Button { Text = "Reset", Location = new Point(x + 150, y), Width = 70 };
-        bReset.Click += delegate { AdvReset(); };
-        p.Controls.AddRange(new Control[] { advExact, bReset });
-
-        advStatus = new Label { Text = "No scan yet.", Location = new Point(8, 80), AutoSize = true, Font = new Font(Font, FontStyle.Bold) };
-        p.Controls.Add(advStatus);
-
-        advList = new ListView
-        {
-            Location = new Point(8, 102), Size = new Size(560, 300), View = View.Details,
-            FullRowSelect = true, HideSelection = false, GridLines = true
-        };
-        advList.Columns.Add("Address", 120);
-        advList.Columns.Add("Previous scan", 130);
-        advList.Columns.Add("Current (live)", 130);
-        advList.Columns.Add("Frozen", 150);
-        p.Controls.Add(advList);
-
-        int rx = 580;
-        p.Controls.Add(new Label { Text = "Value to write:", Location = new Point(rx, 104), AutoSize = true });
-        advSet = new TextBox { Location = new Point(rx + 95, 101), Width = 80, Text = "1" };
-        var bSetSel = new Button { Text = "Set selected", Location = new Point(rx, 132), Width = 120 };
-        var bSetAll = new Button { Text = "Set ALL listed", Location = new Point(rx + 125, 132), Width = 120 };
-        var bFreeze = new Button { Text = "Freeze selected", Location = new Point(rx, 166), Width = 120 };
-        var bUnfreeze = new Button { Text = "Unfreeze all", Location = new Point(rx + 125, 166), Width = 120 };
-        bSetSel.Click += delegate { AdvWrite(true, false); };
-        bSetAll.Click += delegate { AdvWrite(false, false); };
-        bFreeze.Click += delegate { AdvWrite(true, true); };
-        bUnfreeze.Click += delegate { frozen.Clear(); AdvRefreshList(); };
-        p.Controls.AddRange(new Control[] { advSet, bSetSel, bSetAll, bFreeze, bUnfreeze });
-        p.Controls.Add(new Label
-        {
-            Location = new Point(rx, 205), Size = new Size(400, 195), ForeColor = Color.DimGray,
-            Text = "Tip: SAVE your game before writing here - a wrong address can crash it.\r\n\r\n" +
-                   "Progress that counts UP to 1  ->  write 1 (or 0.999)\r\n" +
-                   "Timer that counts DOWN  ->  write 0\r\n" +
-                   "Seconds that count UP  ->  write a big number\r\n\r\n" +
-                   "Live values update 4x per second, so you can watch which one moves together with your progress bar."
-        });
-
-        p.Controls.Add(new Label
-        {
-            Location = new Point(8, 412), Size = new Size(W - 40, pageH - 412), ForeColor = Color.DimGray,
-            Text =
-"FINISH YOUR BUILD / RESEARCH / UPGRADE INSTANTLY (only the item you track - AI is not touched):\r\n" +
-"1. In game, start ONE thing (a research, a ship, a structure or a planet upgrade). Pause the game and Alt-Tab here.\r\n" +
-"2. Leave range 0 to 1 with 'Skip whole numbers' ticked, and click First Scan (range). (This can take a while and use some RAM.)\r\n" +
-"3. Unpause for 2-3 seconds, pause again, click Increased.  Then, still paused, click Unchanged.  Repeat this 3-5 times.\r\n" +
-"4. Use 'In range' to match the bar: e.g. bar about half full -> range 0.4 to 0.6 -> In range.\r\n" +
-"5. When the list appears (500 or fewer), unpause and watch the Current column - pick the value that moves with YOUR progress bar.\r\n" +
-"6. Select it, Value to write = 1, click Set selected. The item should finish immediately.\r\n" +
-"NOTHING FOUND?  Reset, then try: Decreased instead of Increased (countdown timer), or range 0 to 10000 with 'Skip whole numbers' unticked (seconds).\r\n" +
-"Once you know which way it works (e.g. 0-1 progress that increases), the next item is quicker: same steps every time."
-        });
-    }
-
-    void AdvSetBusy(bool busy)
-    {
-        UseWaitCursor = busy;
-        advFirst.Enabled = !busy;
-        foreach (var b in advFilterBtns) b.Enabled = !busy && advHasScan && advAddrs.Count > 0;
-    }
-
-    void AdvReset()
-    {
-        advAddrs = new List<long>(); advVals = new List<double>();
-        advHasScan = false;
-        advStatus.Text = "No scan yet.";
-        advList.Items.Clear();
-        AdvSetBusy(false);
-    }
-
-    async void AdvFirstScan()
-    {
-        if (!CheckAttached()) return;
-        double min, max;
-        if (!TryNum(advMin.Text, out min) || !TryNum(advMax.Text, out max) || min > max) { MessageBox.Show("Enter a valid range (from <= to)."); return; }
-        var t = (ValType)advType.SelectedIndex;
-        bool skip = advSkipWhole.Checked;
-        AdvReset();
-        AdvSetBusy(true);
-        advStatus.Text = "Scanning... (can take up to a minute)";
-        var addrs = new List<long>(); var vals = new List<double>();
-        bool ok;
-        try { ok = await Task.Run(() => mem.ScanRange(min, max, t, skip, addrs, vals)); }
-        finally { AdvSetBusy(false); }
-        if (!ok)
-        {
-            advStatus.Text = "Too many values (over 10 million). Use a narrower range or tick 'Skip whole numbers'.";
-            return;
-        }
-        advAddrs = addrs; advVals = vals; advScanType = t; advHasScan = true;
-        AdvAfterScan();
-    }
-
-    async void AdvFilter(Filter f)
-    {
-        if (!CheckAttached() || !advHasScan) return;
-        double a = 0, b = 0;
-        if (f == Filter.InRange && (!TryNum(advMin.Text, out a) || !TryNum(advMax.Text, out b))) { MessageBox.Show("Enter a valid range."); return; }
-        if (f == Filter.Exact && !TryNum(advExact.Text, out a)) { MessageBox.Show("Enter a valid exact value."); return; }
-        var t = advScanType;
-        var addrs = advAddrs; var prev = advVals;
-        AdvSetBusy(true);
-        advStatus.Text = "Filtering " + addrs.Count.ToString("N0") + " values...";
-        var nA = new List<long>(); var nV = new List<double>();
-        try
-        {
-            await Task.Run(() =>
-            {
-                var ok = new bool[addrs.Count];
-                var cur = mem.ReadMany(addrs, t, ok);
-                for (int i = 0; i < addrs.Count; i++)
-                {
-                    if (!ok[i]) continue;
-                    double v = cur[i], p = prev[i];
-                    if (double.IsNaN(v)) continue;
-                    bool keep;
-                    switch (f)
-                    {
-                        case Filter.Increased: keep = v > p; break;
-                        case Filter.Decreased: keep = v < p; break;
-                        case Filter.Changed: keep = v != p; break;
-                        case Filter.Unchanged: keep = v == p; break;
-                        case Filter.InRange: keep = v >= a && v <= b; break;
-                        default: keep = Math.Abs(v - a) <= 0.01; break;
-                    }
-                    if (keep) { nA.Add(addrs[i]); nV.Add(v); }
-                }
-            });
-        }
-        finally { AdvSetBusy(false); }
-        advAddrs = nA; advVals = nV;
-        AdvAfterScan();
-    }
-
-    void AdvAfterScan()
-    {
-        int n = advAddrs.Count;
-        advStatus.Text = n.ToString("N0") + " value" + (n == 1 ? "" : "s") + " left" +
-            (n > ADV_LIST_MAX ? "  - keep filtering until " + ADV_LIST_MAX + " or fewer to see the list" : "");
-        if (n == 0) advStatus.Text += "  - nothing left, click Reset and try another way (see help below).";
-        AdvSetBusy(false);
-        AdvRefreshList();
-    }
-
-    void AdvRefreshList()
-    {
-        advList.BeginUpdate();
-        advList.Items.Clear();
-        if (advAddrs.Count <= ADV_LIST_MAX)
-        {
-            for (int i = 0; i < advAddrs.Count; i++)
-            {
-                var it = new ListViewItem(advAddrs[i].ToString("X8"));
-                it.SubItems.Add(Fmt(advVals[i]));
-                it.SubItems.Add("");
-                it.SubItems.Add("");
-                it.Tag = advAddrs[i];
-                advList.Items.Add(it);
-            }
-        }
-        // also show frozen addresses that are no longer in the scan list
-        foreach (var kv in frozen)
-        {
-            if (advAddrs.Count <= ADV_LIST_MAX && advAddrs.Contains(kv.Key)) continue;
-            var it = new ListViewItem(kv.Key.ToString("X8"));
-            it.SubItems.Add("-"); it.SubItems.Add(""); it.SubItems.Add("");
-            it.Tag = kv.Key;
-            advList.Items.Add(it);
-        }
-        advList.EndUpdate();
-        AdvUpdateLive();
-    }
-
-    static string Fmt(double v) { return v.ToString("0.#####", System.Globalization.CultureInfo.InvariantCulture); }
-
-    void AdvUpdateLive()
-    {
-        if (mem.Handle == IntPtr.Zero || advList.Items.Count == 0) return;
-        foreach (ListViewItem it in advList.Items)
-        {
-            long a = (long)it.Tag;
-            Frozen fz;
-            bool isFrozen = frozen.TryGetValue(a, out fz);
-            double v;
-            string cur = mem.ReadValue(a, isFrozen ? fz.T : advScanType, out v) ? Fmt(v) : "?";
-            if (it.SubItems[2].Text != cur) it.SubItems[2].Text = cur;
-            string fs = isFrozen ? "FROZEN at " + Fmt(fz.V) : "";
-            if (it.SubItems[3].Text != fs) it.SubItems[3].Text = fs;
-        }
-    }
-
-    void AdvWrite(bool selectedOnly, bool freeze)
-    {
-        if (!CheckAttached()) return;
-        double v;
-        if (!TryNum(advSet.Text, out v)) { MessageBox.Show("Enter a valid value to write."); return; }
-        var targets = new List<long>();
-        if (selectedOnly) foreach (ListViewItem it in advList.SelectedItems) targets.Add((long)it.Tag);
-        else foreach (ListViewItem it in advList.Items) targets.Add((long)it.Tag);
-        if (targets.Count == 0) { MessageBox.Show(selectedOnly ? "Select one or more rows in the list first." : "The list is empty - keep filtering until it shows values."); return; }
-        if (!selectedOnly && targets.Count > 20 &&
-            MessageBox.Show("Write to all " + targets.Count + " listed addresses? Writing to wrong ones can crash the game.", "Confirm",
-                MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
-        var bytes = Mem.Encode(v, advScanType);
-        int ok = 0;
-        foreach (var a in targets)
-        {
-            if (mem.Write(a, bytes)) ok++;
-            if (freeze) frozen[a] = new Frozen { T = advScanType, V = v };
-        }
-        if (ok == 0) MessageBox.Show("Write failed. Try running the trainer as Administrator.");
-        AdvUpdateLive();
-    }
-
     void RefreshProcs()
     {
         cmbProc.Items.Clear();
@@ -1238,7 +906,6 @@ class TrainerForm : Form
             lblAttach.Text = "Attached: " + item.P.ProcessName;
             lblAttach.ForeColor = Color.DarkGreen;
             foreach (var r in rows) ResetRow(r);
-            frozen.Clear(); AdvReset();
             string err = cheats.Init();
             cheatStatus.Text = err ?? cheats.Tick();
             cheatStatus.ForeColor = err == null ? Color.DarkGreen : Color.DarkRed;
@@ -1386,7 +1053,6 @@ class TrainerForm : Form
             mem.Detach();
             lblAttach.Text = "Game closed"; lblAttach.ForeColor = Color.DarkRed;
             foreach (var r in rows) ResetRow(r);
-            frozen.Clear(); AdvReset();
             cheats.Reset();
             cheatStatus.Text = "Game closed."; cheatStatus.ForeColor = Color.DarkRed;
             return;
@@ -1406,8 +1072,6 @@ class TrainerForm : Form
             }
             if (r.Candidates.Count > 0 && r.Candidates.Count <= MAX_WRITE) UpdateStatus(r);
         }
-        foreach (var kv in frozen) mem.Write(kv.Key, Mem.Encode(kv.Value.V, kv.Value.T));
-        AdvUpdateLive();
     }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
