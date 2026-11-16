@@ -265,6 +265,9 @@ static class SinsOffsets
     public const int MOD_RESEARCH_RATE = 0x594;               // type 0x61 ResearchBuildRateAdjustment
     public const int MOD_SHIP_BUILD_RATE = 0x5B4;             // type 0x69 ShipBuildRateAdjustment
     public const int MOD_SHIP_MAX_SLOTS = 0x5BC;              // type 0x6B ShipMaxSlots = fleet supply (additive)
+    // Second copy of the modifier block (same layout). Ship-slot recalculation turns [D+0x5BC] into the HUD max
+    // (D+0x1D8) and [D+0x1B54] into the max the build check uses (D+0x1DC); capital: 0x494 -> D+0x258, 0x1A2C -> D+0x25C.
+    public const int MOD_MIRROR = 0x1598;
 
     // ---- Ships: selection / mouse-over and hull/shield ----
     // Static init of the selection globals:  mov [Sel],eax ; push .. ; mov [eax],eax ; mov eax,[Sel] ; mov [eax+4],eax ; mov [Hover],0
@@ -350,10 +353,12 @@ class GameCheats
         Cheats.Add(new Cheat { Name = "Unlimited Ships", Help = "+2000 fleet supply, +20 capital ship slots",
             Fields = new CheatField[0] });
         // Ship limit entries: preset when "Unlimited Ships" is ticked, otherwise the number boxes.
+        // Each limit lives in two modifier blocks: the first feeds the HUD, the mirror (+MOD_MIRROR) feeds
+        // the build checks (CanRequestShip), so both must be raised or the game says "Insufficient Fleet Capacity".
         Cheats.Add(new Cheat { Name = "Extra fleet supply", Custom = true,
-            Fields = new[] { Add(SinsOffsets.MOD_SHIP_MAX_SLOTS, 0f) } });
+            Fields = new[] { Add(SinsOffsets.MOD_SHIP_MAX_SLOTS, 0f), Add(SinsOffsets.MOD_SHIP_MAX_SLOTS + SinsOffsets.MOD_MIRROR, 0f) } });
         Cheats.Add(new Cheat { Name = "Extra capital ship slots", Custom = true,
-            Fields = new[] { Add(SinsOffsets.MOD_CAPITAL_SHIP_MAX_SLOTS, 0f) } });
+            Fields = new[] { Add(SinsOffsets.MOD_CAPITAL_SHIP_MAX_SLOTS, 0f), Add(SinsOffsets.MOD_CAPITAL_SHIP_MAX_SLOTS + SinsOffsets.MOD_MIRROR, 0f) } });
     }
 
     public Cheat Find(string name) { return Cheats.Find(c => c.Name == name); }
@@ -732,8 +737,8 @@ class TrainerForm : Form
 
         fleetCheat.IsOn = () => unlimited.Chk.Checked || numFleet.Value > 0;
         capCheat.IsOn = () => unlimited.Chk.Checked || numCap.Value > 0;
-        fleetCheat.Fields[0].ValueFn = () => unlimited.Chk.Checked ? 2000f : (float)numFleet.Value;
-        capCheat.Fields[0].ValueFn = () => unlimited.Chk.Checked ? 20f : (float)numCap.Value;
+        foreach (var f in fleetCheat.Fields) f.ValueFn = () => unlimited.Chk.Checked ? 2000f : (float)numFleet.Value;
+        foreach (var f in capCheat.Fields) f.ValueFn = () => unlimited.Chk.Checked ? 20f : (float)numCap.Value;
         EventHandler onNum = delegate
         {
             if (mem.Handle != IntPtr.Zero && cheats.GameGlobal != 0) cheatStatus.Text = cheats.Tick();

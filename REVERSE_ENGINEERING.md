@@ -149,8 +149,16 @@ trainer uses:
 | Fast Research | `ResearchBuildRateAdjustment` | `0x61` | `0x594` | time ÷ (1 + value) |
 | Fast Upgrade | `PlanetUpgradeBuildRateAdjustment` | `0x4D` | `0x544` | time ÷ (1 + value) |
 | Fast Production | `ShipBuildRateAdjustment` | `0x69` | `0x5B4` | time ÷ (1 + value) |
-| Unlimited Ships (fleet supply) | `ShipMaxSlots` | `0x6B` | `0x5BC` | added to max fleet supply |
-| Unlimited Ships (capital ships) | `CapitalShipMaxSlots` | `0x21` | `0x494` | floored, gives capital ship limit |
+| Unlimited Ships (fleet supply) | `ShipMaxSlots` | `0x6B` | `0x5BC` and `0x1B54` | added to max fleet supply |
+| Unlimited Ships (capital ships) | `CapitalShipMaxSlots` | `0x21` | `0x494` and `0x1A2C` | floored, gives capital ship limit |
+
+**The ship limits live in two modifier blocks.** A second copy of the block sits at `P + 0x1598`
+(`0x5BC` → `0x1B54`, `0x494` → `0x1A2C`, `0x53C` → `0x1AD4`). The slot recalculation at `0x608100`
+turns the first copy into the limits the **HUD** shows (`P+0x1D8` fleet, `P+0x258` capital) and the
+second copy into the limits the **build checks** use (`P+0x1DC` fleet, `P+0x25C` capital).
+`CanRequestShip` (`0x58E500`) computes free supply as `[P+0x1DC] − used` (the used total comes from
+`0x606870` on the object at `P+0x1D4`). If only the first copy is raised, the HUD shows the new
+limit but every build says "Insufficient Fleet Capacity". The trainer writes both copies.
 
 **Rate formula** (identical in every rate getter):
 
